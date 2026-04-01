@@ -70,8 +70,25 @@ def translate_if_needed(text):
             for chunk in chunks:
                 translated += GoogleTranslator(source='auto', target='en').translate(chunk)
             st.success("✓ Terjemahan selesai!")
+            
+            # Preview teks terjemahan
+            with st.expander("👁 Lihat hasil terjemahan"):
+                st.text_area(
+                    "Teks CV setelah diterjemahkan:",
+                    translated,
+                    height=200
+                )
+            
             return translated
-        return text
+        else:
+            # Kalau bahasa Inggris, tetap tampilkan preview
+            with st.expander("👁 Lihat teks CV"):
+                st.text_area(
+                    "Teks CV:",
+                    text,
+                    height=200
+                )
+            return text
     except Exception:
         return text
 
