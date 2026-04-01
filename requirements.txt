@@ -7,3 +7,5 @@ scikit-learn
 numpy
 nltk
 pdfplumber
+deep-translator
+langdetect
