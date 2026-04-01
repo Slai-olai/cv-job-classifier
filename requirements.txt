@@ -1,7 +1,7 @@
 streamlit
 torch
 transformers
-tensorflow
+tensorflow-cpu
 huggingface_hub
 scikit-learn
 numpy
