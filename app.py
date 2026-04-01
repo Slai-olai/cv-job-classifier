@@ -119,11 +119,34 @@ st.success("✓ Model berhasil dimuat!")
 
 # Input
 st.subheader("Input CV")
-cv_text = st.text_area(
-    "Paste teks CV di sini:",
-    height=300,
-    placeholder="Contoh: Experienced software developer with 5 years in Python, Django, REST APIs..."
+
+input_method = st.radio(
+    "Pilih cara input:",
+    ["Paste teks", "Upload PDF"],
+    horizontal=True
 )
+
+cv_text = ""
+
+if input_method == "Paste teks":
+    cv_text = st.text_area(
+        "Paste teks CV di sini:",
+        height=300,
+        placeholder="Contoh: Experienced software developer with 5 years in Python..."
+    )
+
+else:
+    uploaded_file = st.file_uploader("Upload file CV (PDF)", type=['pdf'])
+    if uploaded_file is not None:
+        # Extract teks dari PDF
+        import pdfplumber
+        with pdfplumber.open(uploaded_file) as pdf:
+            text = ""
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+        cv_text = text
+        st.success(f"✓ PDF berhasil dibaca! ({len(cv_text)} karakter)")
+        st.text_area("Preview teks CV:", cv_text[:500] + "...", height=150)
 
 model_choice = st.multiselect(
     "Pilih model:",
