@@ -57,6 +57,30 @@ def load_models():
 
     return config, le, tokenizer, model_lstm, model_gru, bert_tokenizer, bert_model
 
+from deep_translator import GoogleTranslator
+from langdetect import detect
+
+def translate_if_needed(text):
+    try:
+        lang = detect(text)
+        if lang != 'en':
+            st.info(f"Terdeteksi bahasa: **{lang}** — otomatis diterjemahkan ke Inggris...")
+            chunks = [text[i:i+4500] for i in range(0, len(text), 4500)]
+            translated = ""
+            for chunk in chunks:
+                translated += GoogleTranslator(source='auto', target='en').translate(chunk)
+            st.success("✓ Terjemahan selesai!")
+            return translated
+        return text
+    except Exception:
+        return text
+
+# ── Preprocessing ──
+def preprocess(text):
+    import nltk
+    nltk.download('stopwords', quiet=True)
+    ...
+
 # ── Preprocessing ──
 def preprocess(text):
     import nltk
@@ -159,6 +183,9 @@ if st.button("🔍 Klasifikasi", type="primary"):
         st.warning("Masukkan teks CV terlebih dahulu!")
     else:
         with st.spinner("Menganalisis CV..."):
+            # Translate dulu kalau bukan bahasa Inggris
+            cv_text_translated = translate_if_needed(cv_text)
+            
             results = predict(
                 cv_text, config, le, tokenizer,
                 model_lstm, model_gru,
