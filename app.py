@@ -202,8 +202,36 @@ if st.button("🔍 Klasifikasi", type="primary"):
                 st.markdown(f"**Model {model}**")
                 st.success(kategori)
                 
-        # Majority vote
-        votes = [results[m] for m in model_choice]
-        final = max(set(votes), key=votes.count)
-        st.markdown("---")
-        st.success(f"**Kesimpulan:** CV ini paling cocok untuk posisi **{final.replace('_', ' ')}**")
+        # Majority vote dengan penjelasan
+votes = [results[m] for m in model_choice]
+vote_count = {k: votes.count(k) for k in set(votes)}
+final = max(vote_count, key=vote_count.get)
+
+st.markdown("---")
+
+# Tampilkan voting
+st.subheader("Perhitungan Voting")
+for kategori, count in sorted(vote_count.items(), 
+                               key=lambda x: x[1], reverse=True):
+    bar = "█" * count + "░" * (len(model_choice) - count)
+    models_voted = [m for m in model_choice if results[m] == kategori]
+    st.markdown(
+        f"**{kategori.replace('_', ' ')}** — "
+        f"{bar} {count}/{len(model_choice)} model "
+        f"*(dipilih oleh: {', '.join(models_voted)})*"
+    )
+
+st.markdown("---")
+
+if list(vote_count.values()).count(max(vote_count.values())) > 1:
+    st.warning(
+        f"⚠️ Hasil seri! Semua model berbeda pendapat. "
+        f"Kesimpulan diambil dari model terbaik: "
+        f"**BERT → {results['BERT'].replace('_', ' ')}**"
+    )
+    final = results['BERT']  # kalau seri, percayai BERT
+else:
+    st.success(
+        f"**Kesimpulan:** CV ini paling cocok untuk posisi "
+        f"**{final.replace('_', ' ')}**"
+    )
