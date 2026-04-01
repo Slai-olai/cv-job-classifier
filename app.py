@@ -149,8 +149,9 @@ if st.button("🔍 Klasifikasi", type="primary"):
         for i, model in enumerate(model_choice):
             with cols[i]:
                 kategori = results[model].replace('_', ' ')
-                st.metric(label=f"Model {model}", value=kategori)
-
+                st.markdown(f"**Model {model}**")
+                st.success(kategori)
+                
         # Majority vote
         votes = [results[m] for m in model_choice]
         final = max(set(votes), key=votes.count)
