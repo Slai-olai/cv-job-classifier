@@ -8,55 +8,55 @@ from huggingface_hub import hf_hub_download
 
 # ── Page config ──
 st.set_page_config(
-    page_title="CV Job Classifier",
-    page_icon="📄",
-    layout="centered"
+    page_title="CV Job Classifier — HR Mode",
+    page_icon="📋",
+    layout="wide"
 )
 
-# ── Download model dari Hugging Face ──
 REPO_ID = "ariif-rahmaan/cv-job-classifier-models"
+
+KATEGORI_LIST = [
+    "Database_Administrator",
+    "Network_Administrator",
+    "Project_manager",
+    "Security_Analyst",
+    "Software_Developer",
+    "Systems_Administrator"
+]
 
 @st.cache_resource
 def load_models():
-    st.info("Memuat model... (hanya sekali, mohon tunggu)")
+    with st.spinner("Memuat model... (hanya sekali, mohon tunggu)"):
+        config_path = hf_hub_download(REPO_ID, "config.json")
+        le_path     = hf_hub_download(REPO_ID, "label_encoder.pkl")
+        tok_path    = hf_hub_download(REPO_ID, "tokenizer_keras.pkl")
+        lstm_path   = hf_hub_download(REPO_ID, "model_lstm.keras")
+        gru_path    = hf_hub_download(REPO_ID, "model_gru.keras")
+        bert_path   = hf_hub_download(REPO_ID, "bert_best.pt")
 
-    # Download semua file
-    config_path    = hf_hub_download(REPO_ID, "config.json")
-    le_path        = hf_hub_download(REPO_ID, "label_encoder.pkl")
-    tok_path       = hf_hub_download(REPO_ID, "tokenizer_keras.pkl")
-    lstm_path      = hf_hub_download(REPO_ID, "model_lstm.keras")
-    gru_path       = hf_hub_download(REPO_ID, "model_gru.keras")
-    bert_path      = hf_hub_download(REPO_ID, "bert_best.pt")
+        with open(config_path) as f:
+            config = json.load(f)
+        with open(le_path, 'rb') as f:
+            le = pickle.load(f)
+        with open(tok_path, 'rb') as f:
+            tokenizer = pickle.load(f)
 
-    # Load config
-    with open(config_path) as f:
-        config = json.load(f)
+        import tensorflow as tf
+        model_lstm = tf.keras.models.load_model(lstm_path)
+        model_gru  = tf.keras.models.load_model(gru_path)
 
-    # Load label encoder
-    with open(le_path, 'rb') as f:
-        le = pickle.load(f)
-
-    # Load tokenizer
-    with open(tok_path, 'rb') as f:
-        tokenizer = pickle.load(f)
-
-    # Load LSTM & GRU
-    import tensorflow as tf
-    model_lstm = tf.keras.models.load_model(lstm_path)
-    model_gru  = tf.keras.models.load_model(gru_path)
-
-    # Load BERT
-    import torch
-    from transformers import BertTokenizer, BertForSequenceClassification
-    bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    bert_model     = BertForSequenceClassification.from_pretrained(
-        'bert-base-uncased', num_labels=config['NUM_CLASSES'])
-    bert_model.load_state_dict(
-        torch.load(bert_path, map_location=torch.device('cpu')))
-    bert_model.eval()
+        import torch
+        from transformers import BertTokenizer, BertForSequenceClassification
+        bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        bert_model     = BertForSequenceClassification.from_pretrained(
+            'bert-base-uncased', num_labels=config['NUM_CLASSES'])
+        bert_model.load_state_dict(
+            torch.load(bert_path, map_location=torch.device('cpu')))
+        bert_model.eval()
 
     return config, le, tokenizer, model_lstm, model_gru, bert_tokenizer, bert_model
 
+# ── Translate ──
 from deep_translator import GoogleTranslator
 from langdetect import detect
 
@@ -64,39 +64,14 @@ def translate_if_needed(text):
     try:
         lang = detect(text)
         if lang != 'en':
-            st.info(f"Terdeteksi bahasa: **{lang}** — otomatis diterjemahkan ke Inggris...")
             chunks = [text[i:i+4500] for i in range(0, len(text), 4500)]
             translated = ""
             for chunk in chunks:
                 translated += GoogleTranslator(source='auto', target='en').translate(chunk)
-            st.success("✓ Terjemahan selesai!")
-            
-            # Preview teks terjemahan
-            with st.expander("👁 Lihat hasil terjemahan"):
-                st.text_area(
-                    "Teks CV setelah diterjemahkan:",
-                    translated,
-                    height=200
-                )
-            
-            return translated
-        else:
-            # Kalau bahasa Inggris, tetap tampilkan preview
-            with st.expander("👁 Lihat teks CV"):
-                st.text_area(
-                    "Teks CV:",
-                    text,
-                    height=200
-                )
-            return text
+            return translated, lang
+        return text, 'en'
     except Exception:
-        return text
-
-# ── Preprocessing ──
-def preprocess(text):
-    import nltk
-    nltk.download('stopwords', quiet=True)
-    ...
+        return text, 'en'
 
 # ── Preprocessing ──
 def preprocess(text):
@@ -106,7 +81,6 @@ def preprocess(text):
     from nltk.corpus import stopwords
     from nltk.tokenize import word_tokenize
     stop_words = set(stopwords.words('english'))
-
     text = text.lower()
     text = re.sub(r'http\S+|www\S+', '', text)
     text = re.sub(r'\S+@\S+', '', text)
@@ -116,25 +90,39 @@ def preprocess(text):
     tokens = [t for t in tokens if t not in stop_words and len(t) > 2]
     return ' '.join(tokens)
 
-# ── Prediksi ──
-def predict(text, config, le, tokenizer, model_lstm, model_gru, bert_tokenizer, bert_model):
+# ── Prediksi dengan confidence ──
+def predict_with_confidence(text, config, le, tokenizer,
+                             model_lstm, model_gru,
+                             bert_tokenizer, bert_model):
     import torch
     from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-    clean = preprocess(text)
-    MAX_LEN      = config['MAX_LEN']
+    clean    = preprocess(text)
+    MAX_LEN  = config['MAX_LEN']
     MAX_LEN_BERT = config['MAX_LEN_BERT']
-    results      = {}
+    results  = {}
 
     # LSTM
-    seq  = tokenizer.texts_to_sequences([clean])
+    seq    = tokenizer.texts_to_sequences([clean])
     padded = pad_sequences(seq, maxlen=MAX_LEN, padding='post')
-    pred = np.argmax(model_lstm.predict(padded, verbose=0), axis=1)[0]
-    results['LSTM'] = le.classes_[pred]
+    proba_lstm = model_lstm.predict(padded, verbose=0)[0]
+    pred_lstm  = np.argmax(proba_lstm)
+    results['LSTM'] = {
+        'label'      : le.classes_[pred_lstm],
+        'confidence' : float(proba_lstm[pred_lstm]),
+        'all_proba'  : {le.classes_[i]: float(p)
+                        for i, p in enumerate(proba_lstm)}
+    }
 
     # GRU
-    pred = np.argmax(model_gru.predict(padded, verbose=0), axis=1)[0]
-    results['GRU'] = le.classes_[pred]
+    proba_gru = model_gru.predict(padded, verbose=0)[0]
+    pred_gru  = np.argmax(proba_gru)
+    results['GRU'] = {
+        'label'      : le.classes_[pred_gru],
+        'confidence' : float(proba_gru[pred_gru]),
+        'all_proba'  : {le.classes_[i]: float(p)
+                        for i, p in enumerate(proba_gru)}
+    }
 
     # BERT
     encoding = bert_tokenizer(
@@ -144,106 +132,198 @@ def predict(text, config, le, tokenizer, model_lstm, model_gru, bert_tokenizer, 
     )
     with torch.no_grad():
         output = bert_model(**encoding)
-    pred = output.logits.argmax(dim=1).item()
-    results['BERT'] = le.classes_[pred]
+    proba_bert = torch.softmax(output.logits, dim=1)[0].numpy()
+    pred_bert  = np.argmax(proba_bert)
+    results['BERT'] = {
+        'label'      : le.classes_[pred_bert],
+        'confidence' : float(proba_bert[pred_bert]),
+        'all_proba'  : {le.classes_[i]: float(p)
+                        for i, p in enumerate(proba_bert)}
+    }
 
-    return results
+    # Voting
+    votes      = [results[m]['label'] for m in ['LSTM', 'GRU', 'BERT']]
+    vote_count = {k: votes.count(k) for k in set(votes)}
+    final      = max(vote_count, key=vote_count.get)
 
-# ── UI ──
-st.title("📄 CV Job Classifier")
-st.markdown("Sistem klasifikasi kategori pekerjaan berbasis CV menggunakan **LSTM**, **GRU**, dan **BERT**")
+    # Kalau seri → percaya BERT
+    if list(vote_count.values()).count(max(vote_count.values())) > 1:
+        final = results['BERT']['label']
+
+    # Confidence score final = rata-rata confidence untuk kategori final
+    conf_final = np.mean([
+        results[m]['all_proba'].get(final, 0)
+        for m in ['LSTM', 'GRU', 'BERT']
+    ])
+
+    # Flag out-of-domain kalau confidence rendah
+    out_of_domain = conf_final < 0.4
+
+    return results, final, conf_final, vote_count, out_of_domain
+
+# ── Extract teks dari PDF ──
+def extract_pdf(file):
+    import pdfplumber
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() or ""
+    return text
+
+# ══════════════════════════════════════════
+# UI UTAMA
+# ══════════════════════════════════════════
+
+st.title("📋 Sistem Seleksi CV Otomatis")
+st.markdown("Sistem klasifikasi CV berbasis **LSTM**, **GRU**, dan **BERT** untuk membantu HR menyaring kandidat.")
 st.markdown("---")
 
 # Load model
 config, le, tokenizer, model_lstm, model_gru, bert_tokenizer, bert_model = load_models()
 st.success("✓ Model berhasil dimuat!")
 
-# Input
-st.subheader("Input CV")
+# ── Step 1: HR pilih posisi ──
+st.header("Step 1 — Pilih Posisi yang Dicari")
+posisi_display = {k.replace('_', ' '): k for k in KATEGORI_LIST}
+posisi_pilihan = st.selectbox(
+    "Posisi:",
+    list(posisi_display.keys())
+)
+posisi_target = posisi_display[posisi_pilihan]
+st.info(f"HR mencari kandidat untuk posisi: **{posisi_pilihan}**")
 
-input_method = st.radio(
-    "Pilih cara input:",
-    ["Paste teks", "Upload PDF"],
-    horizontal=True
+st.markdown("---")
+
+# ── Step 2: Upload CV ──
+st.header("Step 2 — Upload CV Kandidat")
+uploaded_files = st.file_uploader(
+    "Upload satu atau beberapa file CV (PDF):",
+    type=['pdf'],
+    accept_multiple_files=True
 )
 
-cv_text = ""
+if uploaded_files:
+    st.success(f"✓ {len(uploaded_files)} CV berhasil diupload!")
 
-if input_method == "Paste teks":
-    cv_text = st.text_area(
-        "Paste teks CV di sini:",
-        height=300,
-        placeholder="Contoh: Experienced software developer with 5 years in Python..."
-    )
+st.markdown("---")
 
-else:
-    uploaded_file = st.file_uploader("Upload file CV (PDF)", type=['pdf'])
-    if uploaded_file is not None:
-        # Extract teks dari PDF
-        import pdfplumber
-        with pdfplumber.open(uploaded_file) as pdf:
-            text = ""
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-        cv_text = text
-        st.success(f"✓ PDF berhasil dibaca! ({len(cv_text)} karakter)")
-        st.text_area("Preview teks CV:", cv_text[:500] + "...", height=150)
+# ── Step 3: Analisis ──
+st.header("Step 3 — Analisis & Ranking")
 
-model_choice = st.multiselect(
-    "Pilih model:",
-    ["LSTM", "GRU", "BERT"],
-    default=["LSTM", "GRU", "BERT"]
-)
-
-if st.button("🔍 Klasifikasi", type="primary"):
-    if not cv_text.strip():
-        st.warning("Masukkan teks CV terlebih dahulu!")
+if st.button("🔍 Analisis CV", type="primary"):
+    if not uploaded_files:
+        st.warning("Upload minimal 1 CV terlebih dahulu!")
     else:
-        with st.spinner("Menganalisis CV..."):
-            cv_text_translated = translate_if_needed(cv_text)
-            results = predict(
-                cv_text_translated, config, le, tokenizer,
-                model_lstm, model_gru,
-                bert_tokenizer, bert_model
+        all_results = []
+
+        progress = st.progress(0)
+        status   = st.empty()
+
+        for i, file in enumerate(uploaded_files):
+            status.text(f"Menganalisis {file.name}...")
+
+            # Extract teks
+            raw_text = extract_pdf(file)
+
+            # Translate
+            translated_text, lang = translate_if_needed(raw_text)
+
+            # Prediksi
+            results, final, conf_final, vote_count, out_of_domain = predict_with_confidence(
+                translated_text, config, le, tokenizer,
+                model_lstm, model_gru, bert_tokenizer, bert_model
             )
 
+            # Cocok dengan posisi target?
+            is_match = final == posisi_target
+
+            all_results.append({
+                'nama_file'    : file.name,
+                'bahasa'       : lang,
+                'hasil_lstm'   : results['LSTM']['label'].replace('_', ' '),
+                'conf_lstm'    : results['LSTM']['confidence'],
+                'hasil_gru'    : results['GRU']['label'].replace('_', ' '),
+                'conf_gru'     : results['GRU']['confidence'],
+                'hasil_bert'   : results['BERT']['label'].replace('_', ' '),
+                'conf_bert'    : results['BERT']['confidence'],
+                'final'        : final.replace('_', ' '),
+                'confidence'   : conf_final,
+                'is_match'     : is_match,
+                'out_of_domain': out_of_domain,
+                'vote_count'   : vote_count
+            })
+
+            progress.progress((i + 1) / len(uploaded_files))
+
+        status.text("✓ Analisis selesai!")
+
+        # ── Tampilkan hasil ──
         st.markdown("---")
-        st.subheader("Hasil Klasifikasi")
+        st.subheader(f"Hasil Analisis — Posisi: {posisi_pilihan}")
 
-        cols = st.columns(len(model_choice))
-        for i, model in enumerate(model_choice):
-            with cols[i]:
-                kategori = results[model].replace('_', ' ')
-                st.markdown(f"**Model {model}**")
-                st.success(kategori)
+        # Pisahkan yang cocok dan tidak
+        cocok     = [r for r in all_results if r['is_match'] and not r['out_of_domain']]
+        tidak_cocok = [r for r in all_results if not r['is_match'] or r['out_of_domain']]
 
-        # Majority vote dengan penjelasan
-        votes = [results[m] for m in model_choice]
-        vote_count = {k: votes.count(k) for k in set(votes)}
-        final = max(vote_count, key=vote_count.get)
+        # Urutkan berdasarkan confidence
+        cocok     = sorted(cocok, key=lambda x: x['confidence'], reverse=True)
+        tidak_cocok = sorted(tidak_cocok, key=lambda x: x['confidence'], reverse=True)
 
-        st.markdown("---")
-        st.subheader("Perhitungan Voting")
-        for kategori, count in sorted(vote_count.items(),
-                                       key=lambda x: x[1], reverse=True):
-            bar = "█" * count + "░" * (len(model_choice) - count)
-            models_voted = [m for m in model_choice if results[m] == kategori]
-            st.markdown(
-                f"**{kategori.replace('_', ' ')}** — "
-                f"{bar} {count}/{len(model_choice)} model "
-                f"*(dipilih oleh: {', '.join(models_voted)})*"
-            )
+        # ── CV yang cocok ──
+        st.markdown(f"### ✅ CV yang Cocok ({len(cocok)} kandidat)")
+        if cocok:
+            for rank, r in enumerate(cocok, 1):
+                with st.expander(
+                    f"#{rank} — {r['nama_file']} "
+                    f"| Confidence: {r['confidence']*100:.1f}%"
+                ):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("LSTM", r['hasil_lstm'],
+                                  f"{r['conf_lstm']*100:.1f}%")
+                    with col2:
+                        st.metric("GRU", r['hasil_gru'],
+                                  f"{r['conf_gru']*100:.1f}%")
+                    with col3:
+                        st.metric("BERT", r['hasil_bert'],
+                                  f"{r['conf_bert']*100:.1f}%")
+                    with col4:
+                        st.metric("Kesimpulan", r['final'],
+                                  f"{r['confidence']*100:.1f}%")
 
-        st.markdown("---")
-        if list(vote_count.values()).count(max(vote_count.values())) > 1:
-            st.warning(
-                f"⚠️ Hasil seri! Semua model berbeda pendapat. "
-                f"Kesimpulan diambil dari model terbaik: "
-                f"**BERT → {results['BERT'].replace('_', ' ')}**"
-            )
-            final = results['BERT']
+                    if r['bahasa'] != 'en':
+                        st.caption(f"CV terdeteksi bahasa: {r['bahasa']} — otomatis diterjemahkan")
         else:
-            st.success(
-                f"**Kesimpulan:** CV ini paling cocok untuk posisi "
-                f"**{final.replace('_', ' ')}**"
-            )
+            st.warning("Tidak ada CV yang cocok dengan posisi ini.")
+
+        # ── CV yang tidak cocok ──
+        st.markdown(f"### ❌ CV yang Tidak Cocok ({len(tidak_cocok)} kandidat)")
+        if tidak_cocok:
+            for r in tidak_cocok:
+                with st.expander(f"— {r['nama_file']} | Prediksi: {r['final']}"):
+                    if r['out_of_domain']:
+                        st.error(
+                            "⚠️ CV ini kemungkinan berada di luar domain IT — "
+                            "confidence score sangat rendah."
+                        )
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("LSTM", r['hasil_lstm'],
+                                  f"{r['conf_lstm']*100:.1f}%")
+                    with col2:
+                        st.metric("GRU", r['hasil_gru'],
+                                  f"{r['conf_gru']*100:.1f}%")
+                    with col3:
+                        st.metric("BERT", r['hasil_bert'],
+                                  f"{r['conf_bert']*100:.1f}%")
+
+        # ── Ringkasan ──
+        st.markdown("---")
+        st.subheader("Ringkasan")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Total CV", len(all_results))
+        with c2:
+            st.metric("CV Cocok", len(cocok))
+        with c3:
+            st.metric("CV Tidak Cocok", len(tidak_cocok))
